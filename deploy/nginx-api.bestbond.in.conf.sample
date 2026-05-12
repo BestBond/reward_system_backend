@@ -1,11 +1,19 @@
 # Reverse proxy for Nest reward API — place under /etc/nginx/sites-available/ and symlink sites-enabled.
 # Nest + PM2 run from /var/www/api.bestbond.in (directory name = hostname).
-# After DNS A/AAAA for api.bestbond.in → this VPS:  sudo certbot --nginx -d api.bestbond.in
+#
+# TLS: enable THIS file on port 80 first (nginx -t && reload), then either:
+#   certbot --nginx -d api.bestbond.in
+# or, if the cert already exists:  certbot install --cert-name api.bestbond.in
+# Certbot's nginx plugin matches on server_name api.bestbond.in — without this vhost enabled, install fails.
 #
 # Coexists with other server_name blocks (e.g. bestbond.in) on the same machine.
+#
+# IMPORTANT (shared VPS): If bestbond.in already proxies to 127.0.0.1:3000 (Next.js/Node),
+# this API MUST use another port (e.g. 3001). Set PORT=3001 in /var/www/api.bestbond.in/.env
+# and keep the upstream below in sync, then: pm2 reload bestbond-reward-api && nginx -t && systemctl reload nginx
 
 upstream bestbond_reward_api {
-    server 127.0.0.1:3000;
+    server 127.0.0.1:3001;
     keepalive 32;
 }
 
