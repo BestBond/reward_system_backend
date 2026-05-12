@@ -1,16 +1,29 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+import { AppModule } from './app.module';
 
 /**
  * Comma- or space-separated list of allowed browser Origins (scheme + host + port).
  * Required for production: e.g. https://admin.bestbond.in — without it, browsers block
  * XHR/fetch from that site while curl from the server still works.
  */
+const DEV_CORS_FALLBACK =
+  'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174';
+
 function parseCorsOrigins(): string[] {
-  const raw =
-    process.env.CORS_ORIGINS?.trim() ||
-    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174';
+  const raw = process.env.CORS_ORIGINS?.trim();
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!raw) {
+    if (isProduction) {
+      throw new Error(
+        'CORS_ORIGINS must be set in production (comma-separated HTTPS origins for the admin UI).',
+      );
+    }
+    return DEV_CORS_FALLBACK.split(/[, \n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
   return raw
     .split(/[, \n]+/)
     .map((s) => s.trim())
@@ -28,8 +41,41 @@ function isLocalDevBrowserOrigin(origin: string): boolean {
   }
 }
 
+function assertProductionEnv(): void {
+  if (process.env.NODE_ENV !== 'production') return;
+  const cors = process.env.CORS_ORIGINS?.trim();
+  if (!cors) {
+    throw new Error(
+      'CORS_ORIGINS must be set in production (comma-separated admin site origins).',
+    );
+  }
+  const jwt = process.env.JWT_SECRET?.trim();
+  if (!jwt || jwt === 'dev-secret' || jwt.length < 32) {
+    throw new Error(
+      'JWT_SECRET must be set to a strong value (32+ characters, not dev-secret) in production.',
+    );
+  }
+}
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  assertProductionEnv();
+
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  const app = await NestFactory.create(AppModule, {
+    logger: isProduction ? ['error', 'warn', 'log'] : undefined,
+  });
+
+  if (process.env.TRUST_PROXY === '1') {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
 
   // Prevent shared caches (CDN, browser, some proxies) from serving stale user-specific JSON.
   app.use((_, res, next) => {
@@ -40,7 +86,6 @@ async function bootstrap() {
   });
 
   const allowedOrigins = parseCorsOrigins();
-  const isProduction = process.env.NODE_ENV === 'production';
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -73,13 +118,12 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  
+
   const port = Number(process.env.PORT ?? 3000);
   // Bind explicitly so iOS simulator + other clients can reach it reliably.
   await app.listen(port, '0.0.0.0');
-  // Helps verify the running build exposes staff routes (expect 401 without JWT, not 404).
   console.log(
-    `Reward API listening on ${port} — admin dashboard: GET /admin/dashboard (Bearer + users.manage OR dealer.redemptions.manage)`,
+    `Reward API listening on ${port} — health: GET /health — admin: GET /admin/dashboard`,
   );
   if (!isProduction) {
     console.log(

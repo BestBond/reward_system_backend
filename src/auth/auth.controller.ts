@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from './public.decorator';
 import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
@@ -8,6 +9,7 @@ import { SuperadminOtpSignupDto } from './dto/superadmin-otp-signup.dto';
 import { CustomerOtpSignupDto } from './dto/customer-otp-signup.dto';
 import { CustomerOtpLoginDto } from './dto/customer-otp-login.dto';
 
+@Throttle({ default: { limit: 30, ttl: 60_000 } })
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}

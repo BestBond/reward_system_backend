@@ -1,6 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppControllerV1 } from './app/app.controller';
 import { AppService } from './app.service';
@@ -29,23 +31,40 @@ import { SupportModule } from './support/support.module';
       // Load secrets from `.env` only — never from `.env.example` (that file is a template).
       envFilePath: '.env',
     }),
+    ThrottlerModule.forRoot([
+      { name: 'default', ttl: 60_000, limit: 300 },
+    ]),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'sqlite' as const,
-        database: config.get<string>('DB_PATH') ?? 'data.sqlite',
-        entities: [
-          User,
-          Role,
-          Permission,
-          Coupon,
-          PointsTransaction,
-          Reward,
-          Redemption,
-          OtpCode,
-        ],
-        synchronize: true,
-      }),
+      useFactory: (config: ConfigService) => {
+        const isProd = config.get<string>('NODE_ENV') === 'production';
+        const syncExplicit = config
+          .get<string>('DATABASE_SYNCHRONIZE')
+          ?.toLowerCase();
+        /** Production default: off. Dev default: on. Override with DATABASE_SYNCHRONIZE=true|false */
+        const synchronize =
+          syncExplicit === 'true' || (!isProd && syncExplicit !== 'false');
+        if (isProd && synchronize) {
+          Logger.warn(
+            '[TypeORM] DATABASE_SYNCHRONIZE=true in production — schema auto-sync is ON. Set to false after bootstrap and use migrations for ongoing changes.',
+          );
+        }
+        return {
+          type: 'sqlite' as const,
+          database: config.get<string>('DB_PATH') ?? 'data.sqlite',
+          entities: [
+            User,
+            Role,
+            Permission,
+            Coupon,
+            PointsTransaction,
+            Reward,
+            Redemption,
+            OtpCode,
+          ],
+          synchronize,
+        };
+      },
     }),
     AuthModule,
     UsersModule,
@@ -58,6 +77,9 @@ import { SupportModule } from './support/support.module';
     SupportModule,
   ],
   controllers: [AppController, AppControllerV1],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}
