@@ -41,10 +41,14 @@ export class AuthService {
     });
     const saved = await this.otpRepo.save(rec);
 
+    const exposeDebugOtp =
+      process.env.NODE_ENV !== 'production' ||
+      process.env.OTP_DEBUG_EXPOSE_CODE === '1';
+
     return {
       requestId: saved.id,
       otpSent: true,
-      ...(process.env.NODE_ENV !== 'production' ? { devCode: code } : {}),
+      ...(exposeDebugOtp ? { devCode: code } : {}),
     };
   }
 
