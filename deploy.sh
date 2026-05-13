@@ -41,11 +41,16 @@ fi
 export NODE_ENV=production
 export PUPPETEER_SKIP_DOWNLOAD=1
 
-echo "==> npm ci --omit=dev"
-npm ci --omit=dev
+echo "==> npm ci (include dev deps for build)"
+# We need devDependencies to run `nest build` (Nest CLI) + TypeScript tooling.
+npm ci
 
 echo "==> npm run build"
 npm run build
+
+echo "==> npm prune --omit=dev (optional runtime cleanup)"
+# After build, we can remove devDependencies to reduce disk/memory footprint.
+npm prune --omit=dev
 
 if ! command -v pm2 >/dev/null 2>&1; then
   echo "ERROR: pm2 not found. Install: npm i -g pm2"
