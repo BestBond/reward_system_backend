@@ -26,8 +26,10 @@ import { SupportModule } from './support/support.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // Load secrets from `.env` only — never from `.env.example` (that file is a template).
-      envFilePath: '.env',
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? ['.env.production', '.env']
+          : ['.env.local', '.env'],
     }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
     TypeOrmModule.forRootAsync({

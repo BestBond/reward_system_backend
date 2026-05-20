@@ -84,7 +84,7 @@ Check out a few resources that may come in handy when working with NestJS:
 
 ## Production CORS (admin web → API)
 
-If `curl https://api.example.com/...` works but the browser at `https://admin.example.com` shows failed `auth/otp/request` and **Provisional headers** in DevTools, the API is rejecting cross-origin requests. Set on the server:
+If `curl https://api.example.com/...` works but the browser at `https://admin.example.com` shows failed auth requests and **Provisional headers** in DevTools, the API is rejecting cross-origin requests. Set on the server:
 
 `CORS_ORIGINS=https://admin.bestbond.in,https://bestbond.in` (comma-separated, exact `Origin` values including `https` and no trailing slash). Restart the Nest process after changing `.env`.
 

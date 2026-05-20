@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# api.bestbond.in — Nest reward API (PM2: bestbond-reward-api)
-# Run from repo root after cloning to e.g. /var/www/api.bestbond.in
+# api.bestbond.in — Nest API (PM2: bestbond-reward-api)
+# Run from repo root on the VPS clone, e.g. /var/www/api.bestbond.in
 #
-#   chmod +x deploy.sh
+#   chmod +x deploy.sh deploy/restart.sh
+#   cp .env.production.example .env.production   # first time only
 #   ./deploy.sh
 #
-# On same VPS as bestbond.in: set PORT=3001 in .env (Next uses 3000).
 # Optional: RUN_GIT_PULL=1 ./deploy.sh
 #
 
@@ -15,10 +15,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-echo "==> [api.bestbond.in] deploy from $ROOT"
+log() { echo "==> [api.bestbond.in] $*"; }
+
+log "deploy from $ROOT"
 
 if [[ "${RUN_GIT_PULL:-0}" == "1" ]] && [[ -d .git ]]; then
-  echo "==> git: fetch + reset"
+  log "git fetch + reset"
   if git rev-parse --verify origin/main >/dev/null 2>&1; then
     git fetch origin main && git reset --hard origin/main
   elif git rev-parse --verify origin/master >/dev/null 2>&1; then
@@ -29,27 +31,38 @@ if [[ "${RUN_GIT_PULL:-0}" == "1" ]] && [[ -d .git ]]; then
 fi
 
 if [[ ! -f ecosystem.config.cjs ]]; then
-  echo "ERROR: ecosystem.config.cjs missing in $ROOT"
+  echo "ERROR: ecosystem.config.cjs missing"
   exit 1
 fi
 
-if [[ ! -f .env ]]; then
-  echo "ERROR: .env missing. Copy .env.example to .env and set JWT_SECRET, CORS_ORIGINS, PORT, DB_PATH, etc."
+if [[ ! -f .env.production ]] && [[ ! -f .env ]]; then
+  if [[ -f .env.production.example ]]; then
+    echo "ERROR: copy .env.production.example to .env.production and set JWT_SECRET, DB_PATH, etc."
+  else
+    echo "ERROR: missing .env.production (see .env.production.example)"
+  fi
   exit 1
+fi
+
+if [[ ! -f .env.production ]] && [[ -f .env ]]; then
+  log "using legacy .env (consider renaming to .env.production)"
 fi
 
 export NODE_ENV=production
 export PUPPETEER_SKIP_DOWNLOAD=1
 
-echo "==> npm ci (include dev deps for build)"
-# We need devDependencies to run `nest build` (Nest CLI) + TypeScript tooling.
+log "npm ci (includes devDependencies for build)"
 npm ci
 
-echo "==> npm run build"
+log "npm run build"
 npm run build
 
-echo "==> npm prune --omit=dev (optional runtime cleanup)"
-# After build, we can remove devDependencies to reduce disk/memory footprint.
+if [[ ! -f dist/main.js ]]; then
+  echo "ERROR: dist/main.js missing after build"
+  exit 1
+fi
+
+log "npm prune --omit=dev"
 npm prune --omit=dev
 
 if ! command -v pm2 >/dev/null 2>&1; then
@@ -57,8 +70,8 @@ if ! command -v pm2 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> pm2 startOrReload bestbond-reward-api"
+log "pm2 startOrReload bestbond-reward-api"
 pm2 startOrReload ecosystem.config.cjs --only bestbond-reward-api --update-env
 pm2 save
 
-echo "==> Done. Nginx for api.bestbond.in should proxy to http://127.0.0.1:3001 (confirm PORT in .env)"
+log "Done. Confirm PORT in .env.production matches nginx upstream (default 3001 on shared VPS)"

@@ -1,4 +1,4 @@
-# Deploying `api.bestbond.in` (GitHub: **`reward_system_backend`** — local folder in this monorepo is often `reward-system-backend`)
+# Deploying `api.bestbond.in`
 
 **On-server layout:** production app directories match the public hostname under `/var/www/` (e.g. **`/var/www/api.bestbond.in`** for this API, **`/var/www/admin.bestbond.in`** for the admin SPA).
 
@@ -21,35 +21,25 @@
    - **Deploy key (recommended):** on the VPS run `ssh-keygen`, add the **public** key under repo → Settings → **Deploy keys** (read-only), keep the private key on the server, and use `git@github.com:...` as `origin`.
    - Alternatively use an HTTPS remote with a credential helper or PAT (not covered here).
 
-4. **Environment** — Copy and edit (never commit `.env`):
+4. **Environment** — never commit secrets:
 
    ```bash
-   cp .env.example .env
-   nano .env
+   cp .env.production.example .env.production
+   nano .env.production
    ```
 
-   Production essentials: `NODE_ENV=production`, **`PORT`** (see nginx upstream — use **`3001`** if `bestbond.in` already uses **`3000`**), `DB_PATH` (absolute path on persistent disk), strong `JWT_SECRET`, `CORS_ORIGINS=https://admin.bestbond.in`, `TRUST_PROXY=1` behind nginx.
+   Production essentials: `NODE_ENV=production`, **`PORT=3001`** (when `bestbond.in` uses 3000), absolute `DB_PATH`, strong `JWT_SECRET` (32+ chars), `CORS_ORIGINS=https://admin.bestbond.in,https://bestbond.in`, `TRUST_PROXY=1`.
 
-   **OTP testing (admin + mobile autofill, no SMS):** until MSG91 is configured, set on the VPS:
+   Local development: copy `.env.example` → `.env.local` and run `npm run start:dev`.
 
-   ```env
-   MSG91_OTP_ENABLED=0
-   ```
-
-   Redeploy/restart the API. `POST /auth/otp/request` then includes **`devCode`** in the JSON (admin + mobile read it and autofill). Optional: `OTP_DEBUG_EXPOSE_CODE=1` if you ever re-enable MSG91 but still need stub OTP on `/auth/otp/request`.
-
-5. **Install, build, PM2**:
+5. **Deploy** (preferred — matches CI):
 
    ```bash
-   export NODE_ENV=production
-   export PUPPETEER_SKIP_DOWNLOAD=1
-   npm ci --omit=dev
-   npm run build
-   npm i -g pm2
-   pm2 start ecosystem.config.cjs
-   pm2 save
-   pm2 startup systemd -u root --hp /root
+   chmod +x deploy.sh deploy/restart.sh
+   ./deploy.sh
    ```
+
+   Quick PM2 reload without rebuild: `./deploy/restart.sh`
 
 6. **Nginx (order matters for Certbot)**  
    - Copy `deploy/nginx-api.bestbond.in.conf.sample` to `/etc/nginx/sites-available/api.bestbond.in`.  
