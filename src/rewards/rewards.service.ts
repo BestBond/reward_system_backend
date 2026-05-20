@@ -5,16 +5,16 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { Reward } from './entities/reward.entity';
+import { Reward, type GiftTier } from './entities/reward.entity';
 import { Redemption } from './entities/redemption.entity';
 import { User } from '../users/entities/user.entity';
 import { PointsService } from '../points/points.service';
 import { randomBytes } from 'crypto';
 
+export const CONTRACTOR_TIER_THRESHOLD = 2_000_000;
+
 @Injectable()
 export class RewardsService {
-  private static readonly WORKER_SLAB_POINTS = new Set([5000, 10000, 25000]);
-
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(Reward) private readonly rewardsRepo: Repository<Reward>,
@@ -24,44 +24,107 @@ export class RewardsService {
     private readonly points: PointsService,
   ) {}
 
+  static resolveGiftTier(loyaltyPoints: number): GiftTier {
+    const pts = Number(loyaltyPoints ?? 0);
+    return pts >= CONTRACTOR_TIER_THRESHOLD ? 'CONTRACTOR' : 'WORKER';
+  }
+
+  async getMyGiftTier(userId: string) {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const loyaltyPoints = user.loyaltyPoints ?? 0;
+    return {
+      giftTier: RewardsService.resolveGiftTier(loyaltyPoints),
+      loyaltyPoints,
+      contractorThreshold: CONTRACTOR_TIER_THRESHOLD,
+    };
+  }
+
   async list(params: { maxPoints?: number; userId?: string } = {}) {
     const where = { isActive: true } as const;
     let rewards = await this.rewardsRepo.find({
       where,
-      order: { pointsCost: 'ASC', title: 'ASC' },
+      order: { sortOrder: 'ASC', pointsCost: 'ASC', title: 'ASC' },
       take: 200,
     });
+
+    let balance = 0;
+    let includeEligibility = false;
+    let userGiftTier: GiftTier | null = null;
+
     if (params.userId) {
       const user = await this.usersRepo.findOne({
         where: { id: params.userId },
         relations: { roles: true },
       });
-      if (user && this.isWorkerUser(user) && !this.isDealerUser(user)) {
-        rewards = rewards.filter((r) =>
-          RewardsService.WORKER_SLAB_POINTS.has(r.pointsCost),
-        );
+      if (user) {
+        balance = user.loyaltyPoints ?? 0;
+        if (!this.isDealerUser(user)) {
+          includeEligibility = true;
+          userGiftTier = RewardsService.resolveGiftTier(balance);
+        }
       }
     }
+
     if (params.maxPoints != null && Number.isFinite(params.maxPoints)) {
-      return rewards.filter(
+      rewards = rewards.filter(
         (r) => r.pointsCost <= (params.maxPoints as number),
       );
     }
-    return rewards;
+
+    return rewards.map((r) =>
+      this.serializeReward(r, balance, includeEligibility, userGiftTier),
+    );
   }
 
-  getWorkerSlabs() {
+  async getSlabs(userId: string) {
+    const user = await this.usersRepo.findOne({
+      where: { id: userId },
+      relations: { roles: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const balance = user.loyaltyPoints ?? 0;
+    const tier = this.isDealerUser(user)
+      ? null
+      : RewardsService.resolveGiftTier(balance);
+
     return {
-      slabs: [...RewardsService.WORKER_SLAB_POINTS].sort((a, b) => a - b),
+      tiers: ['WORKER', 'CONTRACTOR'] as GiftTier[],
+      giftTier: tier,
+      slabs: [] as number[],
     };
   }
 
-  async getById(id: string) {
+  async getById(id: string, userId?: string) {
     const reward = await this.rewardsRepo.findOne({
       where: { id, isActive: true },
     });
     if (!reward) throw new NotFoundException('Reward not found');
-    return reward;
+
+    let balance = 0;
+    let includeEligibility = false;
+    let userGiftTier: GiftTier | null = null;
+    if (userId) {
+      const user = await this.usersRepo.findOne({
+        where: { id: userId },
+        relations: { roles: true },
+      });
+      if (user) {
+        balance = user.loyaltyPoints ?? 0;
+        if (!this.isDealerUser(user)) {
+          includeEligibility = true;
+          userGiftTier = RewardsService.resolveGiftTier(balance);
+        }
+      }
+    }
+
+    return this.serializeReward(
+      reward,
+      balance,
+      includeEligibility,
+      userGiftTier,
+    );
   }
 
   async redeem(params: {
@@ -88,10 +151,24 @@ export class RewardsService {
       });
       if (!reward) throw new NotFoundException('Reward not found');
 
-      if (this.isDealerUser(roleAwareUser)) {
-        if ((user.loyaltyPoints ?? 0) < reward.pointsCost) {
-          throw new BadRequestException('Insufficient points');
+      const balance = user.loyaltyPoints ?? 0;
+
+      if (!this.isDealerUser(roleAwareUser)) {
+        const userTier = RewardsService.resolveGiftTier(balance);
+        if (reward.giftTier !== userTier) {
+          throw new BadRequestException(
+            userTier === 'WORKER'
+              ? 'This gift is available only at Contractor tier (2,000,000+ points balance).'
+              : 'This gift is available only at Worker tier (balance below 2,000,000 points).',
+          );
         }
+      }
+
+      if (balance < reward.pointsCost) {
+        throw new BadRequestException('Insufficient points');
+      }
+
+      if (this.isDealerUser(roleAwareUser)) {
         await this.points.credit({
           userId: user.id,
           points: -reward.pointsCost,
@@ -119,20 +196,6 @@ export class RewardsService {
         };
       }
 
-      if (
-        this.isWorkerUser(roleAwareUser) &&
-        !RewardsService.WORKER_SLAB_POINTS.has(reward.pointsCost)
-      ) {
-        throw new BadRequestException(
-          'Workers can redeem only slab rewards (5000, 10000, 25000 points).',
-        );
-      }
-
-      if ((user.loyaltyPoints ?? 0) < reward.pointsCost) {
-        throw new BadRequestException('Insufficient points');
-      }
-
-      // Contractor/Painter (CUSTOMER): points held pending superadmin approval (same pattern as dealer store).
       await this.points.credit({
         userId: user.id,
         points: -reward.pointsCost,
@@ -185,6 +248,8 @@ export class RewardsService {
         title: r.reward?.title ?? null,
         description: r.reward?.description ?? null,
         pointsCost: r.reward?.pointsCost ?? 0,
+        giftTier: r.reward?.giftTier ?? null,
+        imageUrl: r.reward?.imageUrl ?? null,
       },
     }));
   }
@@ -217,17 +282,42 @@ export class RewardsService {
     });
   }
 
+  private serializeReward(
+    reward: Reward,
+    balance: number,
+    includeEligibility: boolean,
+    userGiftTier: GiftTier | null,
+  ) {
+    const tierRedeemable =
+      userGiftTier != null && reward.giftTier === userGiftTier;
+    const canAfford = balance >= reward.pointsCost;
+
+    return {
+      id: reward.id,
+      title: reward.title,
+      description: reward.description,
+      pointsCost: reward.pointsCost,
+      giftTier: reward.giftTier,
+      sortOrder: reward.sortOrder,
+      imageUrl: reward.imageUrl,
+      isActive: reward.isActive,
+      createdAt: reward.createdAt,
+      updatedAt: reward.updatedAt,
+      ...(includeEligibility
+        ? {
+            tierRedeemable: tierRedeemable,
+            eligible: canAfford && tierRedeemable,
+          }
+        : {}),
+    };
+  }
+
   private generateTrackingId(): string {
-    // Matches the "BB-88492" style from design (prefix + 5 digits).
     const digits = (randomBytes(3).readUIntBE(0, 3) % 90000) + 10000;
     return `BB-${digits}`;
   }
 
   private isDealerUser(user: User): boolean {
     return (user.roles ?? []).some((r) => r.name === 'DEALER');
-  }
-
-  private isWorkerUser(user: User): boolean {
-    return (user.roles ?? []).some((r) => r.name === 'CUSTOMER');
   }
 }

@@ -10,14 +10,11 @@ import { JwtStrategy } from './jwt.strategy';
 import { AuthController } from './auth.controller';
 import { PermissionsGuard } from './permissions.guard';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { OtpCode } from './entities/otp-code.entity';
 import { createJwtRegisterAsync } from './jwt-module.factory';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([OtpCode]),
     UsersModule,
     RbacModule,
     PassportModule,

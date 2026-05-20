@@ -6,6 +6,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+export type GiftTier = 'WORKER' | 'CONTRACTOR';
+
 @Entity({ name: 'rewards' })
 export class Reward {
   @PrimaryGeneratedColumn('uuid')
@@ -19,6 +21,12 @@ export class Reward {
 
   @Column({ name: 'points_cost', type: 'integer' })
   pointsCost!: number;
+
+  @Column({ name: 'gift_tier', type: 'text', default: 'WORKER' })
+  giftTier!: GiftTier;
+
+  @Column({ name: 'sort_order', type: 'integer', default: 0 })
+  sortOrder!: number;
 
   @Column({ name: 'image_url', type: 'text', nullable: true })
   imageUrl!: string | null;

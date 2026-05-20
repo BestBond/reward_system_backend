@@ -1,7 +1,21 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import * as express from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AppModule } from './app.module';
+
+function resolveGiftAssetsDir(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'dist', 'rewards', 'assets', 'gifts'),
+    path.join(process.cwd(), 'src', 'rewards', 'assets', 'gifts'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
 
 /**
  * Comma- or space-separated list of allowed browser Origins (scheme + host + port).
@@ -118,6 +132,17 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  const giftsDir = resolveGiftAssetsDir();
+  if (giftsDir) {
+    app.use(
+      '/gifts',
+      express.static(giftsDir, {
+        maxAge: isProduction ? '7d' : 0,
+        fallthrough: false,
+      }),
+    );
+  }
 
   const port = Number(process.env.PORT ?? 3000);
   // Bind explicitly so iOS simulator + other clients can reach it reliably.

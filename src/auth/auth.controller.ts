@@ -2,82 +2,67 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from './public.decorator';
 import { AuthService } from './auth.service';
-import { RequestOtpDto } from './dto/request-otp.dto';
-import { AdminOtpSignupDto } from './dto/admin-otp-signup.dto';
-import { AdminOtpLoginDto } from './dto/admin-otp-login.dto';
-import { SuperadminOtpSignupDto } from './dto/superadmin-otp-signup.dto';
-import { CustomerOtpSignupDto } from './dto/customer-otp-signup.dto';
-import { CustomerOtpLoginDto } from './dto/customer-otp-login.dto';
+import { AdminPasscodeSignupDto } from './dto/admin-passcode-signup.dto';
+import { AdminPasscodeLoginDto } from './dto/admin-passcode-login.dto';
+import { SuperadminPasscodeSignupDto } from './dto/superadmin-passcode-signup.dto';
+import { CustomerPasscodeSignupDto } from './dto/customer-passcode-signup.dto';
+import { CustomerPasscodeLoginDto } from './dto/customer-passcode-login.dto';
 
 @Throttle({ default: { limit: 30, ttl: 60_000 } })
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  /** Whether first Super Admin signup is allowed (no SUPERADMIN in DB yet). */
   @Public()
   @Get('superadmin/bootstrap-available')
   superadminBootstrapAvailable() {
     return this.auth.isSuperadminBootstrapAvailable();
   }
 
-  /** Mobile: request OTP to verify phone */
   @Public()
-  @Post('otp/request')
-  requestOtp(@Body() dto: RequestOtpDto) {
-    return this.auth.requestOtp({ phone: dto.phone, countryCode: dto.countryCode });
-  }
-
-  /** Management mobile onboarding: phone + OTP -> ops pending approval (no user password). */
-  @Public()
-  @Post('admin/otp/signup')
-  signupAdminWithOtp(@Body() dto: AdminOtpSignupDto) {
-    return this.auth.signupAdminWithOtp({
+  @Post('admin/passcode/signup')
+  signupAdminWithPasscode(@Body() dto: AdminPasscodeSignupDto) {
+    return this.auth.signupAdminWithPasscode({
       phone: dto.phone,
       countryCode: dto.countryCode,
-      code: dto.code,
+      passcode: dto.passcode,
+      confirmPasscode: dto.confirmPasscode,
       fullName: dto.fullName ?? null,
       email: dto.email ?? null,
     });
   }
 
-  /** Management login: phone + OTP; SUPERADMIN also requires password. */
   @Public()
-  @Post('admin/otp/login')
-  loginAdminWithOtp(@Body() dto: AdminOtpLoginDto) {
-    return this.auth.loginAdminWithOtp({
+  @Post('admin/passcode/login')
+  loginAdminWithPasscode(@Body() dto: AdminPasscodeLoginDto) {
+    return this.auth.loginAdminWithPasscode({
       phone: dto.phone,
       countryCode: dto.countryCode,
-      code: dto.code,
-      password: dto.password,
+      passcode: dto.passcode,
     });
   }
 
-  /**
-   * Web-only onboarding: create the SINGLE superadmin user (phone + OTP + basic details).
-   * (Server does not enforce "web-only" — clients should hide this on mobile.)
-   */
   @Public()
-  @Post('superadmin/otp/signup')
-  signupSuperadminWithOtp(@Body() dto: SuperadminOtpSignupDto) {
-    return this.auth.signupSuperadminWithOtp({
+  @Post('superadmin/passcode/signup')
+  signupSuperadminWithPasscode(@Body() dto: SuperadminPasscodeSignupDto) {
+    return this.auth.signupSuperadminWithPasscode({
       phone: dto.phone,
       countryCode: dto.countryCode,
-      code: dto.code,
+      passcode: dto.passcode,
+      confirmPasscode: dto.confirmPasscode,
       fullName: dto.fullName,
       email: dto.email,
-      password: dto.password,
     });
   }
 
-  /** Customer mobile onboarding: phone + OTP + basic details -> customer session */
   @Public()
-  @Post('customer/otp/signup')
-  signupCustomerWithOtp(@Body() dto: CustomerOtpSignupDto) {
-    return this.auth.signupCustomerWithOtp({
+  @Post('customer/passcode/signup')
+  signupCustomerWithPasscode(@Body() dto: CustomerPasscodeSignupDto) {
+    return this.auth.signupCustomerWithPasscode({
       phone: dto.phone,
       countryCode: dto.countryCode,
-      code: dto.code,
+      passcode: dto.passcode,
+      confirmPasscode: dto.confirmPasscode,
       fullName: dto.fullName ?? null,
       email: dto.email ?? null,
       profession: dto.profession ?? null,
@@ -85,14 +70,13 @@ export class AuthController {
     });
   }
 
-  /** Customer login: phone + OTP only (no PIN/password). */
   @Public()
-  @Post('customer/otp/login')
-  loginCustomerWithOtp(@Body() dto: CustomerOtpLoginDto) {
-    return this.auth.loginCustomerWithOtp({
+  @Post('customer/passcode/login')
+  loginCustomerWithPasscode(@Body() dto: CustomerPasscodeLoginDto) {
+    return this.auth.loginCustomerWithPasscode({
       phone: dto.phone,
       countryCode: dto.countryCode,
-      code: dto.code,
+      passcode: dto.passcode,
     });
   }
 }

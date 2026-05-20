@@ -16,6 +16,10 @@ import * as fs from 'fs';
 import QRCode from 'qrcode';
 import puppeteer from 'puppeteer';
 import { PDFDocument } from 'pdf-lib';
+import {
+  buildCouponFrontSvg,
+  type CouponFrontSvgAssets,
+} from './coupon-front-svg';
 
 /**
  * Coupon design SVGs live under `src/frontend_assets/svgs` and are not copied to `dist/`.
@@ -94,6 +98,75 @@ function couponExportPdfChunkSize(): number {
 
 /** Front-only coupon faces per A4 page (print export). */
 const COUPON_BATCH_PDF_FRONTS_PER_PAGE = 3;
+
+function toCouponSvgDataUri(svg: string): string {
+  const cleaned = svg
+    .replace(/<\?xml[\s\S]*?\?>/g, '')
+    .replace(/<!DOCTYPE[\s\S]*?>/g, '')
+    .trim();
+  const b64 = Buffer.from(cleaned, 'utf8').toString('base64');
+  return `data:image/svg+xml;base64,${b64}`;
+}
+
+function resolveCouponExportAssetPaths(): {
+  readFirstExisting: (paths: string[]) => string;
+} {
+  const readFirstExisting = (paths: string[]) => {
+    for (const p of paths) {
+      try {
+        if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
+      } catch {
+        /* try next */
+      }
+    }
+    throw new NotFoundException(
+      `Coupon export assets missing. Tried: ${paths.join(', ')}`,
+    );
+  };
+
+  return { readFirstExisting };
+}
+
+function loadCouponFrontSvgAssets(): CouponFrontSvgAssets {
+  const { readFirstExisting } = resolveCouponExportAssetPaths();
+  const backendAssetsDir = resolveBackendSvgAssetsDir();
+  const backendRoot = path.resolve(__dirname, '../../..');
+  const repoRoot = path.resolve(backendRoot, '..');
+  const appAssetsDir = path.resolve(
+    repoRoot,
+    'RewardSystem',
+    'RewardSystem',
+    'src',
+    'assets',
+    'svgs',
+    'originals',
+  );
+  const mobileAppAssetsDir = path.resolve(
+    repoRoot,
+    'BestBond',
+    'src',
+    'assets',
+    'svgs',
+    'originals',
+  );
+
+  const couponPhoneScanSvg = readFirstExisting([
+    path.join(backendAssetsDir, 'coupon_phone_scan.svg'),
+    path.join(mobileAppAssetsDir, 'coupon_phone_scan.svg'),
+    path.join(appAssetsDir, 'coupon_phone_scan.svg'),
+  ]);
+  const couponFrontManLogoSvg = readFirstExisting([
+    ...couponBestBondManSvgPaths(),
+    path.join(backendAssetsDir, 'coupon_front_man_logo.svg'),
+    path.join(mobileAppAssetsDir, 'coupon_front_man_logo.svg'),
+    path.join(appAssetsDir, 'coupon_front_man_logo.svg'),
+  ]);
+
+  return {
+    couponPhoneScanUri: toCouponSvgDataUri(couponPhoneScanSvg),
+    couponFrontManLogoUri: toCouponSvgDataUri(couponFrontManLogoSvg),
+  };
+}
 
 function puppeteerPdfTimeoutMs(): number {
   const raw = process.env.PUPPETEER_PDF_TIMEOUT_MS;
@@ -406,165 +479,10 @@ export class CouponsService {
     });
     if (coupons.length === 0) throw new NotFoundException('Batch not found');
 
-    const readFirstExisting = (paths: string[]) => {
-      for (const p of paths) {
-        try {
-          if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
-        } catch {
-          /* try next */
-        }
-      }
-      throw new NotFoundException(
-        `Coupon export assets missing. Tried: ${paths.join(', ')}`,
-      );
-    };
-
-    // Prefer backend-hosted design assets; fall back to app assets if needed.
-    const backendAssetsDir = resolveBackendSvgAssetsDir();
-    const backendRoot = path.resolve(__dirname, '../../..'); // <repo>/reward-system-backend
-    const repoRoot = path.resolve(backendRoot, '..'); // <repo>
-    const appAssetsDir = path.resolve(
-      repoRoot,
-      'RewardSystem',
-      'RewardSystem',
-      'src',
-      'assets',
-      'svgs',
-      'originals',
-    );
-    const mobileAppAssetsDir = path.resolve(
-      repoRoot,
-      'BestBond',
-      'src',
-      'assets',
-      'svgs',
-      'originals',
-    );
-
-    const couponPhoneScanSvg = readFirstExisting([
-      path.join(backendAssetsDir, 'coupon_phone_scan.svg'),
-      path.join(mobileAppAssetsDir, 'coupon_phone_scan.svg'),
-      path.join(appAssetsDir, 'coupon_phone_scan.svg'),
-    ]);
-    const couponFrontManLogoSvg = readFirstExisting([
-      ...couponBestBondManSvgPaths(),
-      path.join(backendAssetsDir, 'coupon_front_man_logo.svg'),
-      path.join(mobileAppAssetsDir, 'coupon_front_man_logo.svg'),
-      path.join(appAssetsDir, 'coupon_front_man_logo.svg'),
-    ]);
-
-    // Render at the exact design canvas size (660x245), then scale in mm for A4.
-    const DESIGN_W = 660;
+    const assets = loadCouponFrontSvgAssets();
     const DESIGN_H = 245;
     const faceWmm = 180;
-    const faceHmm = (faceWmm * DESIGN_H) / DESIGN_W;
-
-    const escapeHtml = (s: string) =>
-      s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-    const fmtPoints = (n: number) =>
-      n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-
-    const toSvgDataUri = (svg: string) => {
-      const cleaned = svg
-        .replace(/<\?xml[\s\S]*?\?>/g, '')
-        .replace(/<!DOCTYPE[\s\S]*?>/g, '')
-        .trim();
-      const b64 = Buffer.from(cleaned, 'utf8').toString('base64');
-      return `data:image/svg+xml;base64,${b64}`;
-    };
-
-    const couponPhoneScanUri = toSvgDataUri(couponPhoneScanSvg);
-    const couponFrontManLogoUri = toSvgDataUri(couponFrontManLogoSvg);
-
-    const renderFrontSvg = (params: {
-      code: string;
-      points: number;
-      qrDataUrl: string;
-      idSuffix: string;
-    }) => {
-      const code = params.code;
-      const points = params.points;
-      const qr = params.qrDataUrl;
-      const sid = params.idSuffix.replace(/[^a-zA-Z0-9_]/g, '_');
-
-      // New front design (from provided image): white left, orange right, centered pill, subtitle, top-right man+logo.
-      const LEFT_W = 220;
-      const RIGHT_X = LEFT_W;
-      const RIGHT_W = DESIGN_W - LEFT_W;
-
-      const iconW = 28;
-      const iconX = Math.round((LEFT_W - iconW) / 2);
-      const iconY = 14;
-      const qrSize = 150;
-      const qrX = Math.round((LEFT_W - qrSize) / 2);
-      const qrY = iconY + iconW + 10;
-      const idY = qrY + qrSize + 14;
-
-      const pillW = 330;
-      const pillH = 74;
-      const pillX = Math.round(RIGHT_X + (RIGHT_W - pillW) / 2);
-      const pillY = 76;
-      const pillR = Math.round(pillH / 2);
-
-      // Logo asset is 68×101 (portrait); avoid square 52×52 to reduce raster blur in PDF.
-      const logoW = 50;
-      const logoH = 75;
-      const logoPad = 10;
-      const logoX = DESIGN_W - logoW - logoPad;
-      const logoY = 12;
-
-      return `
-        <svg viewBox="0 0 ${DESIGN_W} ${DESIGN_H}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <clipPath id="c_${sid}">
-              <rect x="0" y="0" width="${DESIGN_W}" height="${DESIGN_H}" rx="26" ry="26" />
-            </clipPath>
-            <linearGradient id="g_${sid}" x1="${RIGHT_X}" y1="0" x2="${DESIGN_W}" y2="245" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#F97316"/>
-              <stop offset="1" stop-color="#EA6A12"/>
-            </linearGradient>
-          </defs>
-          <g clip-path="url(#c_${sid})">
-            <rect x="0" y="0" width="${DESIGN_W}" height="${DESIGN_H}" fill="#FFFFFF" />
-            <rect x="${RIGHT_X}" y="0" width="${RIGHT_W}" height="${DESIGN_H}" fill="url(#g_${sid})" />
-
-            <!-- subtle texture-ish overlay (keeps it pure SVG) -->
-            <path d="M${RIGHT_X + 40} 18C${RIGHT_X + 80} 50 ${RIGHT_X + 150} 78 ${RIGHT_X + 240} 96C${RIGHT_X + 315} 111 ${RIGHT_X + 365} 132 ${RIGHT_X + 420} 162V0H${RIGHT_X}v245h${RIGHT_W}v-26c-62-8-126-30-190-66C${RIGHT_X + 140} 126 ${RIGHT_X + 80} 72 ${RIGHT_X + 40} 18Z" fill="#000" opacity="0.06"/>
-
-            <!-- Left: phone scan icon -->
-            <image href="${couponPhoneScanUri}" x="${iconX}" y="${iconY}" width="${iconW}" height="${iconW}" />
-
-            <!-- Left: coupon QR -->
-            <image href="${qr}" x="${qrX}" y="${qrY}" width="${qrSize}" height="${qrSize}" preserveAspectRatio="xMidYMid meet" />
-
-            <!-- Left: ID label -->
-            <text x="${Math.round(LEFT_W / 2)}" y="${idY}" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="13" font-weight="700" fill="#6B7280">ID: ${escapeHtml(code)}</text>
-
-            <!-- Right: Best Bond man mark (prefer src/coupons/assets/BestBondman.svg) -->
-            <image href="${couponFrontManLogoUri}" x="${logoX}" y="${logoY}" width="${logoW}" height="${logoH}" preserveAspectRatio="xMidYMid meet" />
-
-            <!-- Center pill -->
-            <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${pillR}" ry="${pillR}" fill="#FFFFFF" />
-            <text x="${pillX + Math.round(pillW / 2)}" y="${pillY + 50}" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="36" font-weight="900" fill="#1F2937">${escapeHtml(fmtPoints(points))} Points</text>
-
-            <!-- Subtitle -->
-            <text x="${RIGHT_X + Math.round(RIGHT_W / 2)}" y="198" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="14" font-weight="600" fill="#FFFFFF">Scan in the Best Bond app to redeem</text>
-          </g>
-        </svg>
-      `;
-    };
+    const faceHmm = (faceWmm * DESIGN_H) / 660;
 
     const couponPages: string[] = [];
     for (
@@ -584,7 +502,7 @@ export class CouponsService {
         const qr = await QRCode.toDataURL(code, { margin: 0, width: 520 });
         const idSuffix = `f${pageStart + j}`;
         faces.push(`<div class="face" style="width:${faceWmm}mm;height:${faceHmm}mm;">
-            ${renderFrontSvg({ code, points, qrDataUrl: qr, idSuffix })}
+            ${buildCouponFrontSvg({ code, points, qrDataUrl: qr, idSuffix, assets })}
           </div>`);
       }
       couponPages.push(`<div class="page">\n${faces.join('\n')}\n</div>`);
@@ -625,141 +543,7 @@ export class CouponsService {
         : COUPON_BATCH_PDF_FRONTS_PER_PAGE;
 
     const slice = coupons.slice(index, index + perPage);
-
-    const readFirstExisting = (paths: string[]) => {
-      for (const p of paths) {
-        try {
-          if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
-        } catch {
-          /* try next */
-        }
-      }
-      throw new NotFoundException(
-        `Coupon export assets missing. Tried: ${paths.join(', ')}`,
-      );
-    };
-
-    const backendAssetsDir = resolveBackendSvgAssetsDir();
-    const backendRoot = path.resolve(__dirname, '../../..'); // <repo>/reward-system-backend
-    const repoRoot = path.resolve(backendRoot, '..'); // <repo>
-    const appAssetsDir = path.resolve(
-      repoRoot,
-      'RewardSystem',
-      'RewardSystem',
-      'src',
-      'assets',
-      'svgs',
-      'originals',
-    );
-    const mobileAppAssetsDir = path.resolve(
-      repoRoot,
-      'BestBond',
-      'src',
-      'assets',
-      'svgs',
-      'originals',
-    );
-
-    const couponPhoneScanSvg = readFirstExisting([
-      path.join(backendAssetsDir, 'coupon_phone_scan.svg'),
-      path.join(mobileAppAssetsDir, 'coupon_phone_scan.svg'),
-      path.join(appAssetsDir, 'coupon_phone_scan.svg'),
-    ]);
-    const couponFrontManLogoSvg = readFirstExisting([
-      ...couponBestBondManSvgPaths(),
-      path.join(backendAssetsDir, 'coupon_front_man_logo.svg'),
-      path.join(mobileAppAssetsDir, 'coupon_front_man_logo.svg'),
-      path.join(appAssetsDir, 'coupon_front_man_logo.svg'),
-    ]);
-
-    const DESIGN_W = 660;
-    const DESIGN_H = 245;
-
-    const escapeHtml = (s: string) =>
-      s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-    const fmtPoints = (n: number) =>
-      n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-
-    const toSvgDataUri = (svg: string) => {
-      const cleaned = svg
-        .replace(/<\?xml[\s\S]*?\?>/g, '')
-        .replace(/<!DOCTYPE[\s\S]*?>/g, '')
-        .trim();
-      const b64 = Buffer.from(cleaned, 'utf8').toString('base64');
-      return `data:image/svg+xml;base64,${b64}`;
-    };
-
-    const couponPhoneScanUri = toSvgDataUri(couponPhoneScanSvg);
-    const couponFrontManLogoUri = toSvgDataUri(couponFrontManLogoSvg);
-
-    const renderFrontSvg = (p: {
-      code: string;
-      points: number;
-      qrDataUrl: string;
-      idSuffix: string;
-    }) => {
-      const code = p.code;
-      const points = p.points;
-      const qr = p.qrDataUrl;
-      const sid = p.idSuffix.replace(/[^a-zA-Z0-9_]/g, '_');
-      const LEFT_W = 220;
-      const RIGHT_X = LEFT_W;
-      const RIGHT_W = DESIGN_W - LEFT_W;
-      const iconW = 28;
-      const iconX = Math.round((LEFT_W - iconW) / 2);
-      const iconY = 14;
-      const qrSize = 150;
-      const qrX = Math.round((LEFT_W - qrSize) / 2);
-      const qrY = iconY + iconW + 10;
-      const idY = qrY + qrSize + 14;
-      const pillW = 330;
-      const pillH = 74;
-      const pillX = Math.round(RIGHT_X + (RIGHT_W - pillW) / 2);
-      const pillY = 76;
-      const pillR = Math.round(pillH / 2);
-      const logoW = 50;
-      const logoH = 75;
-      const logoPad = 10;
-      const logoX = DESIGN_W - logoW - logoPad;
-      const logoY = 12;
-      return `
-        <svg viewBox="0 0 ${DESIGN_W} ${DESIGN_H}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <clipPath id="c_${sid}">
-              <rect x="0" y="0" width="${DESIGN_W}" height="${DESIGN_H}" rx="26" ry="26" />
-            </clipPath>
-            <linearGradient id="g_${sid}" x1="${RIGHT_X}" y1="0" x2="${DESIGN_W}" y2="245" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#F97316"/>
-              <stop offset="1" stop-color="#EA6A12"/>
-            </linearGradient>
-          </defs>
-          <g clip-path="url(#c_${sid})">
-            <rect x="0" y="0" width="${DESIGN_W}" height="${DESIGN_H}" fill="#FFFFFF" />
-            <rect x="${RIGHT_X}" y="0" width="${RIGHT_W}" height="${DESIGN_H}" fill="url(#g_${sid})" />
-            <path d="M${RIGHT_X + 40} 18C${RIGHT_X + 80} 50 ${RIGHT_X + 150} 78 ${RIGHT_X + 240} 96C${RIGHT_X + 315} 111 ${RIGHT_X + 365} 132 ${RIGHT_X + 420} 162V0H${RIGHT_X}v245h${RIGHT_W}v-26c-62-8-126-30-190-66C${RIGHT_X + 140} 126 ${RIGHT_X + 80} 72 ${RIGHT_X + 40} 18Z" fill="#000" opacity="0.06"/>
-            <image href="${couponPhoneScanUri}" x="${iconX}" y="${iconY}" width="${iconW}" height="${iconW}" />
-            <image href="${qr}" x="${qrX}" y="${qrY}" width="${qrSize}" height="${qrSize}" preserveAspectRatio="xMidYMid meet" />
-            <text x="${Math.round(LEFT_W / 2)}" y="${idY}" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="13" font-weight="700" fill="#6B7280">ID: ${escapeHtml(code)}</text>
-            <image href="${couponFrontManLogoUri}" x="${logoX}" y="${logoY}" width="${logoW}" height="${logoH}" preserveAspectRatio="xMidYMid meet" />
-            <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${pillR}" ry="${pillR}" fill="#FFFFFF" />
-            <text x="${pillX + Math.round(pillW / 2)}" y="${pillY + 50}" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="36" font-weight="900" fill="#1F2937">${escapeHtml(fmtPoints(points))} Points</text>
-            <text x="${RIGHT_X + Math.round(RIGHT_W / 2)}" y="198" text-anchor="middle"
-              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
-              font-size="14" font-weight="600" fill="#FFFFFF">Scan in the Best Bond app to redeem</text>
-          </g>
-        </svg>
-      `;
-    };
+    const assets = loadCouponFrontSvgAssets();
 
     const blocks: string[] = [];
     for (let i = 0; i < slice.length; i++) {
@@ -769,7 +553,7 @@ export class CouponsService {
       const qr = await QRCode.toDataURL(code, { margin: 0, width: 520 });
       const idSuffix = `pv${index + i}`;
       blocks.push(
-        `<div class="face">${renderFrontSvg({ code, points, qrDataUrl: qr, idSuffix })}</div>`,
+        `<div class="face">${buildCouponFrontSvg({ code, points, qrDataUrl: qr, idSuffix, assets })}</div>`,
       );
     }
 

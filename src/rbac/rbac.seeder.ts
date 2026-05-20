@@ -54,6 +54,10 @@ export class RbacSeeder implements OnModuleInit {
         description:
           'Ops admin: record dealer store redemptions and approve/reject dealer redemption queue',
       },
+      {
+        key: 'rewards.manage',
+        description: 'Superadmin: manage gift catalog and slab rewards',
+      },
     ] as const;
 
     for (const p of permissions) {
@@ -82,23 +86,19 @@ export class RbacSeeder implements OnModuleInit {
       permissionKeys: [],
     });
 
-    await this.ensureDevOtpSuperadmin();
+    await this.ensureDevPasscodeSuperadmin();
     this.logger.log('RBAC seed ensured (roles + permissions).');
   }
 
   /**
-   * Non-production only: ensure a SUPERADMIN for dev (OTP + password login).
+   * Non-production only: ensure a SUPERADMIN for dev (mobile + passcode login).
    *
    * Configure with `.env` (see `.env.example`):
    * - DEV_SUPERADMIN_PHONE — 10 digits, country +91 applied in seeder
    * - DEV_SUPERADMIN_EMAIL, DEV_SUPERADMIN_NAME
-   * - DEV_SUPERADMIN_PASSWORD (min 8 chars) — synced on every startup for that phone if the user is SUPERADMIN
-   *
-   * If no SUPERADMIN exists yet, creates the dev user at DEV_SUPERADMIN_PHONE.
-   * If SUPERADMIN row(s) already exist, still applies DEV_SUPERADMIN_PASSWORD to the user at
-   * DEV_SUPERADMIN_PHONE when that account has the SUPERADMIN role (so local login works after pull).
+   * - DEV_SUPERADMIN_PASSCODE — 6 digits, synced on startup for that phone if SUPERADMIN
    */
-  private async ensureDevOtpSuperadmin() {
+  private async ensureDevPasscodeSuperadmin() {
     if (this.config.get<string>('NODE_ENV') === 'production') return;
 
     const digits = (
@@ -114,7 +114,10 @@ export class RbacSeeder implements OnModuleInit {
       'admin@admin.in';
     const name =
       (this.config.get<string>('DEV_SUPERADMIN_NAME') ?? '').trim() || 'Admin';
-    const devPw = (this.config.get<string>('DEV_SUPERADMIN_PASSWORD') ?? '').trim();
+    const devPasscode = (
+      this.config.get<string>('DEV_SUPERADMIN_PASSCODE') ?? '111111'
+    ).trim();
+    const passcodeValid = /^\d{6}$/.test(devPasscode);
 
     const superadminRole = await this.rbac.getRoleByName('SUPERADMIN');
     if (!superadminRole) return;
@@ -122,15 +125,18 @@ export class RbacSeeder implements OnModuleInit {
     const existingSuperCount = await this.users.countUsersWithRole('SUPERADMIN');
 
     let user = await this.users.findByPhone(fullPhone);
-    if (user && devPw.length >= 8) {
+    if (user && passcodeValid) {
       const loaded = await this.users.findById(user.id);
       const isSuper = (loaded?.roles ?? []).some(
         (r) => String(r.name).toUpperCase() === 'SUPERADMIN',
       );
       if (loaded && isSuper) {
-        await this.users.setPasswordHash(loaded.id, await bcrypt.hash(devPw, 12));
+        await this.users.setPinHash(
+          loaded.id,
+          await bcrypt.hash(devPasscode, 12),
+        );
         this.logger.warn(
-          `SUPERADMIN password synced from DEV_SUPERADMIN_PASSWORD for phone=${fullPhone}.`,
+          `SUPERADMIN passcode synced from DEV_SUPERADMIN_PASSCODE for phone=${fullPhone}.`,
         );
       }
     }
@@ -145,31 +151,35 @@ export class RbacSeeder implements OnModuleInit {
         );
         return;
       }
-      const passwordHash =
-        devPw.length >= 8
-          ? await bcrypt.hash(devPw, 12)
-          : await bcrypt.hash(`${fullPhone}:${Date.now()}:dev`, 12);
-      if (devPw.length < 8) {
+      if (!passcodeValid) {
         this.logger.warn(
-          'DEV_SUPERADMIN_PASSWORD unset or shorter than 8 characters; dev Super Admin password is random. Set DEV_SUPERADMIN_PASSWORD for OTP+password login, or bootstrap via POST /auth/superadmin/otp/signup.',
+          'DEV_SUPERADMIN_PASSCODE must be exactly 6 digits. Dev Super Admin bootstrap skipped.',
         );
+        return;
       }
       user = await this.users.createLocalUser({
         email,
-        passwordHash,
+        passwordHash: await bcrypt.hash(`${fullPhone}:${Date.now()}:dev`, 12),
         phone: fullPhone,
       });
-      this.logger.warn(
-        `Bootstrapped dev SUPERADMIN. phone=${fullPhone} (OTP + password when DEV_SUPERADMIN_PASSWORD is set).`,
+      await this.users.setPinHash(
+        user.id,
+        await bcrypt.hash(devPasscode, 12),
       );
-    } else if (devPw.length >= 8) {
-      await this.users.setPasswordHash(user.id, await bcrypt.hash(devPw, 12));
       this.logger.warn(
-        `Updated dev SUPERADMIN password from DEV_SUPERADMIN_PASSWORD for phone=${fullPhone}.`,
+        `Bootstrapped dev SUPERADMIN. phone=${fullPhone} passcode from DEV_SUPERADMIN_PASSCODE.`,
+      );
+    } else if (passcodeValid) {
+      await this.users.setPinHash(
+        user.id,
+        await bcrypt.hash(devPasscode, 12),
+      );
+      this.logger.warn(
+        `Updated dev SUPERADMIN passcode from DEV_SUPERADMIN_PASSCODE for phone=${fullPhone}.`,
       );
     } else {
       this.logger.warn(
-        `Dev user exists at ${fullPhone} but DEV_SUPERADMIN_PASSWORD not set (min 8). Super Admin login needs a known password — set env and restart.`,
+        `Dev user exists at ${fullPhone} but DEV_SUPERADMIN_PASSCODE is invalid. Set a 6-digit passcode and restart.`,
       );
     }
 

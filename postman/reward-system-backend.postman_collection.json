@@ -2,48 +2,13 @@
   "info": {
     "_postman_id": "c9b60b7d-1f0b-4df5-a920-3ffb4d6e6f61",
     "name": "Reward System Backend",
-    "description": "API collection (2026).\n\n**Public auth:** `POST /auth/otp/request` → `GET /auth/superadmin/bootstrap-available` (optional) → `auth/superadmin/otp/signup` (first Super Admin only; includes **password** min 8), `auth/admin/otp/signup` (Ops), `auth/admin/otp/login` (**Super:** OTP + **password**; **Ops:** OTP only — omit password), `auth/customer/*`.\n\n**Ops approval:** Super Admin (Bearer) → `GET /admin/operational-admins/pending` → `POST /admin/operational-admins/:id/approve`.\n\n**JWT:** Bearer on protected routes.",
+    "description": "API collection (2026).\n\n**Public auth:** `GET /auth/superadmin/bootstrap-available` (optional) → `auth/superadmin/passcode/signup` (first Super Admin), `auth/admin/passcode/signup` (Ops), `auth/admin/passcode/login`, `auth/customer/passcode/*`.\n\n**Ops approval:** Super Admin (Bearer) → `GET /admin/operational-admins/pending` → `POST /admin/operational-admins/:id/approve`.\n\n**JWT:** Bearer on protected routes.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
       "name": "Auth (public)",
       "item": [
-        {
-          "name": "OTP Request (SMS stub; saves devCode in dev)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "url": {
-              "raw": "{{baseUrl}}/auth/otp/request",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "otp", "request"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{otpPhone10}}\"\n}\n"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('otp request', function () {",
-                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json).to.have.property('otpSent', true);",
-                  "  pm.expect(json).to.have.property('requestId');",
-                  "  if (json.devCode) {",
-                  "    pm.collectionVariables.set('mobileDevOtp', String(json.devCode));",
-                  "  }",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "Super Admin — bootstrap available?",
           "request": {
@@ -57,18 +22,18 @@
           }
         },
         {
-          "name": "Super Admin — OTP Signup (web; fails if Super Admin already exists)",
+          "name": "Super Admin — Passcode Signup (web; fails if Super Admin already exists)",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": {
-              "raw": "{{baseUrl}}/auth/superadmin/otp/signup",
+              "raw": "{{baseUrl}}/auth/superadmin/passcode/signup",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "superadmin", "otp", "signup"]
+              "path": ["auth", "superadmin", "passcode", "signup"]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{superadminPhone10}}\",\n  \"code\": \"{{mobileDevOtp}}\",\n  \"fullName\": \"{{superadminFullName}}\",\n  \"email\": \"{{superadminEmail}}\",\n  \"password\": \"{{superadminPassword}}\"\n}\n"
+              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{superadminPhone10}}\",\n  \"passcode\": \"{{devPasscode}}\",\n  \"confirmPasscode\": \"{{devPasscode}}\",\n  \"fullName\": \"{{superadminFullName}}\",\n  \"email\": \"{{superadminEmail}}\"\n}\n"
             }
           },
           "event": [
@@ -89,18 +54,18 @@
           ]
         },
         {
-          "name": "Management — Admin OTP Login (Super Admin or approved Ops Admin)",
+          "name": "Management — Admin Passcode Login (Super Admin or approved Ops Admin)",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": {
-              "raw": "{{baseUrl}}/auth/admin/otp/login",
+              "raw": "{{baseUrl}}/auth/admin/passcode/login",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "admin", "otp", "login"]
+              "path": ["auth", "admin", "passcode", "login"]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{otpPhone10}}\",\n  \"code\": \"{{mobileDevOtp}}\",\n  \"password\": \"{{superadminPassword}}\"\n}\n"
+              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{otpPhone10}}\",\n  \"passcode\": \"{{devPasscode}}\"\n}\n"
             }
           },
           "event": [
@@ -109,7 +74,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('admin OTP login', function () {",
+                  "pm.test('admin passcode login', function () {",
                   "  if (pm.response.code === 403) {",
                   "    // Ops Admin pending Super Admin approval",
                   "    return;",
@@ -129,18 +94,18 @@
           ]
         },
         {
-          "name": "Ops Admin — Self signup (phone + OTP; returns pendingApproval, no token)",
+          "name": "Ops Admin — Self signup (phone + passcode; returns pendingApproval, no token)",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": {
-              "raw": "{{baseUrl}}/auth/admin/otp/signup",
+              "raw": "{{baseUrl}}/auth/admin/passcode/signup",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "admin", "otp", "signup"]
+              "path": ["auth", "admin", "passcode", "signup"]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{opsAdminPhone10}}\",\n  \"code\": \"{{mobileDevOtp}}\",\n  \"fullName\": \"Ops Test User\",\n  \"email\": \"{{opsAdminEmail}}\"\n}\n"
+              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{opsAdminPhone10}}\",\n  \"passcode\": \"{{devPasscode}}\",\n  \"confirmPasscode\": \"{{devPasscode}}\",\n  \"fullName\": \"Ops Test User\",\n  \"email\": \"{{opsAdminEmail}}\"\n}\n"
             }
           },
           "event": [
@@ -160,18 +125,18 @@
           ]
         },
         {
-          "name": "Customer — OTP Signup",
+          "name": "Customer — Passcode Signup",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": {
-              "raw": "{{baseUrl}}/auth/customer/otp/signup",
+              "raw": "{{baseUrl}}/auth/customer/passcode/signup",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "customer", "otp", "signup"]
+              "path": ["auth", "customer", "passcode", "signup"]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{customerPhone10}}\",\n  \"code\": \"{{mobileDevOtp}}\",\n  \"fullName\": \"Customer Test\",\n  \"email\": \"{{customerEmail}}\"\n}\n"
+              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{customerPhone10}}\",\n  \"passcode\": \"{{devPasscode}}\",\n  \"confirmPasscode\": \"{{devPasscode}}\",\n  \"fullName\": \"Customer Test\",\n  \"email\": \"{{customerEmail}}\"\n}\n"
             }
           },
           "event": [
@@ -192,18 +157,18 @@
           ]
         },
         {
-          "name": "Customer — OTP Login",
+          "name": "Customer — Passcode Login",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": {
-              "raw": "{{baseUrl}}/auth/customer/otp/login",
+              "raw": "{{baseUrl}}/auth/customer/passcode/login",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "customer", "otp", "login"]
+              "path": ["auth", "customer", "passcode", "login"]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{customerPhone10}}\",\n  \"code\": \"{{mobileDevOtp}}\"\n}\n"
+              "raw": "{\n  \"countryCode\": \"{{countryCode}}\",\n  \"phone\": \"{{customerPhone10}}\",\n  \"passcode\": \"{{devPasscode}}\"\n}\n"
             }
           },
           "event": [

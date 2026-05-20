@@ -8,6 +8,10 @@
       {
         "include": "coupons/assets/**/*",
         "watchAssets": true
+      },
+      {
+        "include": "rewards/assets/gifts/**/*",
+        "watchAssets": true
       }
     ]
   }

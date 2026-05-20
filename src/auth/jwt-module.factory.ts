@@ -2,7 +2,7 @@ import type { JwtModuleAsyncOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import type { StringValue } from 'ms';
 
-/** Shared JWT module registration for AuthModule, OtpModule, and any future issuers. */
+/** Shared JWT module registration for AuthModule and any future issuers. */
 export function createJwtRegisterAsync(): JwtModuleAsyncOptions {
   return {
     inject: [ConfigService],

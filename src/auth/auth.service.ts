@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,12 +7,9 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { RbacService } from '../rbac/rbac.service';
-import { OtpCode } from './entities/otp-code.entity';
 import { normalizeAuthPhone } from './phone.util';
 
 @Injectable()
@@ -20,70 +18,59 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly rbac: RbacService,
     private readonly jwt: JwtService,
-    @InjectRepository(OtpCode)
-    private readonly otpRepo: Repository<OtpCode>,
   ) {}
 
-  /**
-   * Mobile flow: request OTP for a phone number. In production you'd integrate SMS provider.
-   */
-  async requestOtp(params: { phone: string; countryCode: string }) {
-    const code = `${Math.floor(100000 + Math.random() * 900000)}`;
-    const codeHash = await bcrypt.hash(code, 10);
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    const phone = normalizeAuthPhone(params.countryCode, params.phone);
-
-    const rec = this.otpRepo.create({
-      phone,
-      codeHash,
-      expiresAt,
-      consumedAt: null,
-    });
-    const saved = await this.otpRepo.save(rec);
-
-    const msg91Off = (() => {
-      const on = String(process.env.MSG91_OTP_ENABLED ?? '1').trim();
-      return on === '0' || on.toLowerCase() === 'false';
-    })();
-    const exposeDebugOtp =
-      process.env.NODE_ENV !== 'production' ||
-      process.env.OTP_DEBUG_EXPOSE_CODE === '1' ||
-      msg91Off;
-
-    return {
-      requestId: saved.id,
-      otpSent: true,
-      ...(exposeDebugOtp ? { devCode: code } : {}),
-    };
+  private assertPasscodesMatch(passcode: string, confirmPasscode: string) {
+    if (passcode !== confirmPasscode) {
+      throw new BadRequestException('Passcode and confirmation do not match');
+    }
   }
 
+  private async hashPasscode(passcode: string): Promise<string> {
+    return bcrypt.hash(passcode, 12);
+  }
 
-  async signupAdminWithOtp(params: {
+  private async verifyPasscode(
+    passcode: string,
+    pinHash: string | null | undefined,
+  ): Promise<void> {
+    if (!pinHash) {
+      throw new UnauthorizedException('Passcode not configured for this account');
+    }
+    const ok = await bcrypt.compare(passcode, pinHash);
+    if (!ok) {
+      throw new UnauthorizedException('Invalid passcode');
+    }
+  }
+
+  async signupAdminWithPasscode(params: {
     phone: string;
     countryCode: string;
-    code: string;
+    passcode: string;
+    confirmPasscode: string;
     fullName?: string | null;
     email?: string | null;
   }) {
+    this.assertPasscodesMatch(params.passcode, params.confirmPasscode);
     const fullPhone = normalizeAuthPhone(params.countryCode, params.phone);
-    await this.consumeOtp({ fullPhone, code: params.code });
 
     const existing = await this.users.findByPhone(fullPhone);
     if (existing) {
       throw new ConflictException(
-        'This mobile number is already registered. Log in with OTP instead.',
+        'This mobile number is already registered. Log in with your passcode instead.',
       );
     }
 
     const email =
-      (params.email?.trim() && params.email.trim().length
+      params.email?.trim() && params.email.trim().length
         ? params.email.trim()
-        : `${fullPhone.replace(/\+/g, '')}@bestbonds.local`);
+        : `${fullPhone.replace(/\+/g, '')}@bestbonds.local`;
     const user = await this.users.createLocalUser({
       email,
       phone: fullPhone,
       passwordHash: await bcrypt.hash(`${fullPhone}:${Date.now()}`, 8),
     });
+    await this.users.setPinHash(user.id, await this.hashPasscode(params.passcode));
 
     const loaded = await this.users.findById(user.id);
     if (!this.hasAdminRole(loaded)) {
@@ -94,7 +81,6 @@ export class AuthService {
       await this.users.setRoles(user.id, [operationalRole]);
     }
 
-    // Capture basic onboarding details (stored in existing profile fields)
     const fullName = params.fullName?.trim() || null;
     const deliveryAddress = 'Management Office';
     if (fullName) {
@@ -104,14 +90,12 @@ export class AuthService {
     return { pendingApproval: true };
   }
 
-  async loginAdminWithOtp(params: {
+  async loginAdminWithPasscode(params: {
     phone: string;
     countryCode: string;
-    code: string;
-    password?: string;
+    passcode: string;
   }) {
     const fullPhone = normalizeAuthPhone(params.countryCode, params.phone);
-    await this.consumeOtp({ fullPhone, code: params.code });
 
     const user = await this.users.findByPhone(fullPhone);
     if (!user || !user.isActive) {
@@ -135,18 +119,8 @@ export class AuthService {
         throw new ForbiddenException('Waiting for Super Admin approval.');
       }
     }
-    if (isSuper) {
-      const pw = params.password?.trim() ?? '';
-      if (!pw) {
-        throw new UnauthorizedException(
-          'Password is required for Super Admin accounts.',
-        );
-      }
-      const ok = await bcrypt.compare(pw, loaded.passwordHash);
-      if (!ok) {
-        throw new UnauthorizedException('Invalid password.');
-      }
-    }
+    await this.verifyPasscode(params.passcode, loaded.pinHash);
+
     const snap = this.authSnapshot(loaded);
     return {
       accessToken: await this.jwt.signAsync({ sub: user.id, email: user.email }),
@@ -155,34 +129,36 @@ export class AuthService {
     };
   }
 
-  async signupCustomerWithOtp(params: {
+  async signupCustomerWithPasscode(params: {
     phone: string;
     countryCode: string;
-    code: string;
+    passcode: string;
+    confirmPasscode: string;
     fullName?: string | null;
     email?: string | null;
     profession?: string | null;
     deliveryAddress?: string | null;
   }) {
+    this.assertPasscodesMatch(params.passcode, params.confirmPasscode);
     const fullPhone = normalizeAuthPhone(params.countryCode, params.phone);
-    await this.consumeOtp({ fullPhone, code: params.code });
 
     const existing = await this.users.findByPhone(fullPhone);
     if (existing) {
       throw new ConflictException(
-        'This mobile number is already registered. Log in with OTP instead.',
+        'This mobile number is already registered. Log in with your passcode instead.',
       );
     }
 
     const email =
-      (params.email?.trim() && params.email.trim().length
+      params.email?.trim() && params.email.trim().length
         ? params.email.trim()
-        : `${fullPhone.replace(/\+/g, '')}@bestbonds.local`);
+        : `${fullPhone.replace(/\+/g, '')}@bestbonds.local`;
     const user = await this.users.createLocalUser({
       email,
       phone: fullPhone,
       passwordHash: await bcrypt.hash(`${fullPhone}:${Date.now()}`, 8),
     });
+    await this.users.setPinHash(user.id, await this.hashPasscode(params.passcode));
     await this.ensureDefaultMobileRole(user.id);
 
     const fullName = params.fullName?.trim() || null;
@@ -205,13 +181,12 @@ export class AuthService {
     };
   }
 
-  async loginCustomerWithOtp(params: {
+  async loginCustomerWithPasscode(params: {
     phone: string;
     countryCode: string;
-    code: string;
+    passcode: string;
   }) {
     const fullPhone = normalizeAuthPhone(params.countryCode, params.phone);
-    await this.consumeOtp({ fullPhone, code: params.code });
 
     const user = await this.users.findByPhone(fullPhone);
     if (!user || !user.isActive) {
@@ -224,6 +199,7 @@ export class AuthService {
     if (!roleNames.has('CUSTOMER') && !roleNames.has('DEALER')) {
       throw new UnauthorizedException('Account not found');
     }
+    await this.verifyPasscode(params.passcode, loaded?.pinHash);
 
     const snap = this.authSnapshot(loaded);
     return {
@@ -233,21 +209,20 @@ export class AuthService {
     };
   }
 
-  async signupSuperadminWithOtp(params: {
+  async signupSuperadminWithPasscode(params: {
     phone: string;
     countryCode: string;
-    code: string;
+    passcode: string;
+    confirmPasscode: string;
     fullName: string;
     email: string;
-    password: string;
   }) {
+    this.assertPasscodesMatch(params.passcode, params.confirmPasscode);
     const fullPhone = normalizeAuthPhone(params.countryCode, params.phone);
     const superCount = await this.users.countUsersWithRole('SUPERADMIN');
     if (superCount > 0) {
       throw new UnauthorizedException('Super Admin already exists');
     }
-
-    await this.consumeOtp({ fullPhone, code: params.code });
 
     const existing = await this.users.findByPhone(fullPhone);
     if (existing) {
@@ -257,18 +232,17 @@ export class AuthService {
     }
 
     const email = params.email.trim();
-    const passwordHash = await bcrypt.hash(params.password, 12);
     const user = await this.users.createLocalUser({
       email,
       phone: fullPhone,
-      passwordHash,
+      passwordHash: await bcrypt.hash(`${fullPhone}:${Date.now()}`, 8),
     });
+    await this.users.setPinHash(user.id, await this.hashPasscode(params.passcode));
 
     const role = await this.rbac.getRoleByName('SUPERADMIN');
     if (!role) throw new UnauthorizedException('SUPERADMIN role not configured');
     await this.users.setRoles(user.id, [role]);
 
-    // Auto-approve superadmin
     await this.users.approveStaffUser({ userId: user.id, approvedBy: user.id });
     await this.users.updateProfile(user.id, {
       fullName: params.fullName.trim(),
@@ -282,24 +256,6 @@ export class AuthService {
       roles: snap.roles,
       permissions: snap.permissions,
     };
-  }
-
-  private async consumeOtp(params: { fullPhone: string; code: string }) {
-    const latest = await this.otpRepo.findOne({
-      where: { phone: params.fullPhone, consumedAt: IsNull() },
-      order: { createdAt: 'DESC' },
-    });
-    if (!latest) {
-      throw new UnauthorizedException('OTP not found');
-    }
-    if (latest.expiresAt.getTime() < Date.now()) {
-      throw new UnauthorizedException('OTP expired');
-    }
-    const ok = await bcrypt.compare(params.code, latest.codeHash);
-    if (!ok) throw new UnauthorizedException('Invalid OTP');
-
-    latest.consumedAt = new Date();
-    await this.otpRepo.save(latest);
   }
 
   private async ensureDefaultMobileRole(userId: string) {
@@ -322,7 +278,6 @@ export class AuthService {
     );
   }
 
-  /** True when no SUPERADMIN exists yet (first-time web/bootstrap signup allowed). */
   async isSuperadminBootstrapAvailable(): Promise<{ allowed: boolean }> {
     const superCount = await this.users.countUsersWithRole('SUPERADMIN');
     return { allowed: superCount === 0 };

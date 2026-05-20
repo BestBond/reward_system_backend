@@ -25,14 +25,22 @@ export class RewardsController {
     return this.rewards.listMyRedemptions(user.id);
   }
 
+  @Get('me/tier')
+  myGiftTier(@Req() req: Request) {
+    const user = req.user as AuthUser;
+    return this.rewards.getMyGiftTier(user.id);
+  }
+
   @Get('slabs')
-  getWorkerSlabs() {
-    return this.rewards.getWorkerSlabs();
+  getSlabs(@Req() req: Request) {
+    const user = req.user as AuthUser;
+    return this.rewards.getSlabs(user.id);
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.rewards.getById(id);
+  get(@Req() req: Request, @Param('id') id: string) {
+    const user = req.user as AuthUser;
+    return this.rewards.getById(id, user.id);
   }
 
   @Post(':id/redeem')

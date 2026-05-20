@@ -1,4 +1,5 @@
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ALLOWED_COUPON_POINTS } from '../coupon-tiers';
 
 export class GenerateCouponsDto {
   /**
@@ -8,8 +9,7 @@ export class GenerateCouponsDto {
   title!: string;
 
   @IsInt()
-  @Min(1)
-  @Max(500000)
+  @IsIn([...ALLOWED_COUPON_POINTS])
   points!: number;
 
   @IsInt()

@@ -90,8 +90,8 @@ If `curl https://api.example.com/...` works but the browser at `https://admin.ex
 
 ## Super Admin authentication (BestBond)
 
-- **Login:** `POST /auth/otp/request` then `POST /auth/admin/otp/login` with `phone`, `countryCode`, `code`, and **`password`** (min 8 characters). Operational admins use the same endpoint but **omit** `password`.
-- **First Super Admin:** `GET /auth/superadmin/bootstrap-available` returns `{ allowed: true }` only when no `SUPERADMIN` exists. Then `POST /auth/superadmin/otp/signup` with phone, OTP, `fullName`, `email`, and **`password`** (min 8).
+- **Login:** `POST /auth/admin/passcode/login` with `phone`, `countryCode`, and `passcode` (6 digits).
+- **First Super Admin:** `GET /auth/superadmin/bootstrap-available` returns `{ allowed: true }` only when no `SUPERADMIN` exists. Then `POST /auth/superadmin/passcode/signup` with phone, passcode, confirmPasscode, `fullName`, and `email`.
 - **Local dev:** Set `DEV_SUPERADMIN_PHONE` and `DEV_SUPERADMIN_PASSWORD` in `.env` (see `.env.example`). Restart the API so the seeder applies them.
 - **Breaking change (prod):** Super Admins need a real `passwordHash`; use bootstrap signup or a controlled DB migration — the dev seeder does not run in production.
 

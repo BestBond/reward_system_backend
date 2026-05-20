@@ -9,6 +9,8 @@ import { Reward } from '../rewards/entities/reward.entity';
 import { User } from '../users/entities/user.entity';
 import { Coupon } from '../coupons/entities/coupon.entity';
 import { AdminController } from './admin.controller';
+import { AdminRewardsController } from './admin-rewards.controller';
+import { AdminRewardsService } from './admin-rewards.service';
 import { AdminService } from './admin.service';
 
 @Module({
@@ -24,7 +26,7 @@ import { AdminService } from './admin.service';
       Coupon,
     ]),
   ],
-  controllers: [AdminController],
-  providers: [AdminService],
+  controllers: [AdminController, AdminRewardsController],
+  providers: [AdminService, AdminRewardsService],
 })
 export class AdminModule {}

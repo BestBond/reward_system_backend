@@ -13,7 +13,6 @@ import { Coupon } from './coupons/entities/coupon.entity';
 import { PointsTransaction } from './points/entities/points-transaction.entity';
 import { Reward } from './rewards/entities/reward.entity';
 import { Redemption } from './rewards/entities/redemption.entity';
-import { OtpCode } from './auth/entities/otp-code.entity';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { RbacModule } from './rbac/rbac.module';
@@ -23,8 +22,6 @@ import { CouponsModule } from './coupons/coupons.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { SupportModule } from './support/support.module';
-import { OtpModule } from './otp/otp.module';
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -59,7 +56,6 @@ import { OtpModule } from './otp/otp.module';
             PointsTransaction,
             Reward,
             Redemption,
-            OtpCode,
           ],
           synchronize,
         };
@@ -74,7 +70,6 @@ import { OtpModule } from './otp/otp.module';
     RewardsModule,
     TransactionsModule,
     SupportModule,
-    OtpModule,
   ],
   controllers: [AppController, AppControllerV1],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
